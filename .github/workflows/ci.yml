@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      # No API key is configured, and none is needed: the graph runs against a
+      # stubbed LLM. A green CI run costs nothing and calls no provider.
+      - name: Test
+        run: pytest -q
+        env:
+          ANTHROPIC_API_KEY: ""
+          OPENAI_API_KEY: ""
