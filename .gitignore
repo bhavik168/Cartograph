@@ -1,0 +1,21 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Run artifacts are produced locally; no results ship in this repo.
+runs/*
+!runs/.gitkeep
+
+# Checkpointer database
+*.sqlite
+*.sqlite3
+
+# User-supplied corpus documents
+corpus/*
+!corpus/.gitkeep
+!corpus/README.md
