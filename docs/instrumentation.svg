@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 540" width="1280" height="540" role="img" aria-label="Instrumentation: all five calling nodes funnel through llm.call, which emits one TokenEvent per call to tokens.jsonl; each event's cause is classified productive, overhead or waste, and the waste ratio drives rule-based recommendations.">
+  <title>Cartographer — token metering and attribution</title>
+
+  <defs>
+    <style>
+      .t   { font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, Helvetica, Arial, sans-serif; }
+      .m   { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+      .fg  { fill: #e6edf3; }
+      .mu  { fill: #8695a8; }
+      .dim { fill: #5d6b7d; }
+    </style>
+    <marker id="iSlate" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4a5d75"/>
+    </marker>
+    <marker id="iCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="540" rx="16" fill="#0d1420" stroke="#1c2838"/>
+
+  <text class="t fg" x="36" y="44" font-size="18" font-weight="700">Instrumentation</text>
+  <text class="m mu" x="36" y="66" font-size="11">every model call is metered · agent/llm.py → agent/auditor/</text>
+
+  <!-- call sites -->
+  <text class="t dim" x="40" y="94" font-size="10">call sites</text>
+  <rect x="40" y="110" width="170" height="42" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m mu" x="58" y="136" font-size="11">supervisor</text>
+  <rect x="40" y="162" width="170" height="42" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m mu" x="58" y="188" font-size="11">researcher ×N</text>
+  <rect x="40" y="214" width="170" height="42" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m mu" x="58" y="240" font-size="11">synthesizer</text>
+  <rect x="40" y="266" width="170" height="42" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m mu" x="58" y="292" font-size="11">critic</text>
+  <rect x="40" y="318" width="170" height="42" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m mu" x="58" y="344" font-size="11">memory (compaction)</text>
+
+  <path d="M210,131 C242,131 242,230 266,230" fill="none" stroke="#4a5d75" stroke-width="1.5" marker-end="url(#iSlate)"/>
+  <path d="M210,183 C242,183 242,230 266,230" fill="none" stroke="#4a5d75" stroke-width="1.5" marker-end="url(#iSlate)"/>
+  <path d="M210,235 H266" fill="none" stroke="#4a5d75" stroke-width="1.5" marker-end="url(#iSlate)"/>
+  <path d="M210,287 C242,287 242,230 266,230" fill="none" stroke="#4a5d75" stroke-width="1.5" marker-end="url(#iSlate)"/>
+  <path d="M210,339 C242,339 242,230 266,230" fill="none" stroke="#4a5d75" stroke-width="1.5" marker-end="url(#iSlate)"/>
+
+  <!-- the choke point -->
+  <rect x="270" y="100" width="250" height="260" rx="14" fill="#101826" stroke="#38bdf8" stroke-width="1.6"/>
+  <text class="m fg" x="395" y="140" font-size="16" font-weight="700" text-anchor="middle">llm.call()</text>
+  <text class="m" x="395" y="160" font-size="10" text-anchor="middle" fill="#7dd3fc">node= · cause=  required</text>
+  <path d="M290,178 H500" stroke="#233145" stroke-width="1"/>
+  <text class="m mu" x="292" y="204" font-size="10.5">1  tier routing · cheap | strong</text>
+  <text class="m mu" x="292" y="230" font-size="10.5">2  retry + exponential backoff</text>
+  <text class="m mu" x="292" y="256" font-size="10.5">3  failover → openai</text>
+  <text class="m mu" x="292" y="282" font-size="10.5">4  schema repair · one pass</text>
+  <path d="M290,300 H500" stroke="#233145" stroke-width="1"/>
+  <text class="t" x="395" y="322" font-size="10.5" text-anchor="middle" fill="#fbbf24">an unattributed call</text>
+  <text class="t" x="395" y="338" font-size="10.5" text-anchor="middle" fill="#fbbf24">is a bug, not a gap</text>
+
+  <path d="M520,230 H577" stroke="#4a5d75" stroke-width="1.5" marker-end="url(#iSlate)"/>
+
+  <!-- TokenEvent -->
+  <rect x="580" y="140" width="200" height="176" rx="12" fill="#141d2b" stroke="#a78bfa" stroke-width="1.6"/>
+  <text class="t fg" x="598" y="168" font-size="13.5" font-weight="600">TokenEvent</text>
+  <text class="m mu" x="598" y="192" font-size="9.5">node · cause</text>
+  <text class="m mu" x="598" y="208" font-size="9.5">model · tier · provider</text>
+  <text class="m mu" x="598" y="224" font-size="9.5">input / output tokens</text>
+  <text class="m mu" x="598" y="240" font-size="9.5">cached_input_tokens</text>
+  <text class="m mu" x="598" y="256" font-size="9.5">revision_index</text>
+  <text class="m mu" x="598" y="272" font-size="9.5">latency_ms · ok</text>
+  <text class="m dim" x="598" y="288" font-size="9.5">composition{ system,</text>
+  <text class="m dim" x="598" y="302" font-size="9.5">scratchpad, tool_output }</text>
+
+  <path d="M680,316 V336" stroke="#4a5d75" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#iSlate)"/>
+  <rect x="580" y="340" width="200" height="34" rx="9" fill="#101826" stroke="#2d3b4f"/>
+  <text class="m mu" x="680" y="362" font-size="10" text-anchor="middle">runs/&lt;id&gt;/tokens.jsonl</text>
+  <text class="t dim" x="680" y="392" font-size="9.5" text-anchor="middle">flushed per call — a crashed run still audits</text>
+
+  <path d="M780,230 H837" stroke="#38bdf8" stroke-width="1.5" marker-end="url(#iCyan)"/>
+
+  <!-- attribution panel -->
+  <rect x="840" y="100" width="400" height="300" rx="14" fill="#101826" stroke="#233145"/>
+  <text class="t fg" x="860" y="126" font-size="13" font-weight="600">attribution — every cause has a class</text>
+
+  <rect x="850" y="136" width="380" height="86" rx="10" fill="#34d399" fill-opacity="0.06"/>
+  <text class="t" x="862" y="156" font-size="11.5" font-weight="600" fill="#34d399">productive</text>
+  <rect x="862" y="164" width="66" height="20" rx="6" fill="#34d399" fill-opacity="0.14"/>
+  <text class="m" x="895" y="178" font-size="9" text-anchor="middle" fill="#6ee7b7">planning</text>
+  <rect x="936" y="164" width="66" height="20" rx="6" fill="#34d399" fill-opacity="0.14"/>
+  <text class="m" x="969" y="178" font-size="9" text-anchor="middle" fill="#6ee7b7">research</text>
+  <rect x="1010" y="164" width="70" height="20" rx="6" fill="#34d399" fill-opacity="0.14"/>
+  <text class="m" x="1045" y="178" font-size="9" text-anchor="middle" fill="#6ee7b7">synthesis</text>
+  <rect x="862" y="190" width="62" height="20" rx="6" fill="#34d399" fill-opacity="0.14"/>
+  <text class="m" x="893" y="204" font-size="9" text-anchor="middle" fill="#6ee7b7">critique</text>
+  <rect x="932" y="190" width="86" height="20" rx="6" fill="#34d399" fill-opacity="0.14"/>
+  <text class="m" x="975" y="204" font-size="9" text-anchor="middle" fill="#6ee7b7">finalization</text>
+
+  <rect x="850" y="232" width="380" height="60" rx="10" fill="#38bdf8" fill-opacity="0.06"/>
+  <text class="t" x="862" y="252" font-size="11.5" font-weight="600" fill="#38bdf8">overhead</text>
+  <rect x="862" y="260" width="120" height="20" rx="6" fill="#38bdf8" fill-opacity="0.14"/>
+  <text class="m" x="922" y="274" font-size="9" text-anchor="middle" fill="#7dd3fc">memory_compaction</text>
+  <rect x="990" y="260" width="60" height="20" rx="6" fill="#38bdf8" fill-opacity="0.14"/>
+  <text class="m" x="1020" y="274" font-size="9" text-anchor="middle" fill="#7dd3fc">fallback</text>
+  <rect x="1058" y="260" width="112" height="20" rx="6" fill="#38bdf8" fill-opacity="0.14"/>
+  <text class="m" x="1114" y="274" font-size="9" text-anchor="middle" fill="#7dd3fc">injection_rescan</text>
+
+  <rect x="850" y="302" width="380" height="60" rx="10" fill="#fb7185" fill-opacity="0.07"/>
+  <text class="t" x="862" y="322" font-size="11.5" font-weight="600" fill="#fb7185">waste</text>
+  <rect x="862" y="330" width="96" height="20" rx="6" fill="#fb7185" fill-opacity="0.16"/>
+  <text class="m" x="910" y="344" font-size="9" text-anchor="middle" fill="#fda4af">schema_repair</text>
+  <rect x="966" y="330" width="66" height="20" rx="6" fill="#fb7185" fill-opacity="0.16"/>
+  <text class="m" x="999" y="344" font-size="9" text-anchor="middle" fill="#fda4af">revision</text>
+  <rect x="1040" y="330" width="108" height="20" rx="6" fill="#fb7185" fill-opacity="0.16"/>
+  <text class="m" x="1094" y="344" font-size="9" text-anchor="middle" fill="#fda4af">retry_transient</text>
+
+  <text class="m" x="1040" y="386" font-size="12" text-anchor="middle" fill="#fda4af">waste_ratio = waste ÷ total</text>
+
+  <!-- recommendations -->
+  <path d="M36,418 H1244" stroke="#1c2838" stroke-width="1"/>
+  <text class="t mu" x="36" y="440" font-size="11">rule-based recommendations — deterministic, free, and they add no tokens to the run being audited</text>
+
+  <rect x="36" y="452" width="280" height="56" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m" x="52" y="474" font-size="9.5" fill="#fda4af">schema_repairs &gt; 2</text>
+  <text class="t mu" x="52" y="492" font-size="10">tighten the schema prompt</text>
+
+  <rect x="336" y="452" width="280" height="56" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m" x="352" y="474" font-size="9.5" fill="#fda4af">waste_ratio &gt; 20%</text>
+  <text class="t mu" x="352" y="492" font-size="10">sharpen the critic's criteria</text>
+
+  <rect x="636" y="452" width="280" height="56" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m" x="652" y="474" font-size="9.5" fill="#fda4af">scratchpad &gt; 40% of input</text>
+  <text class="t mu" x="652" y="492" font-size="10">compact memory sooner</text>
+
+  <rect x="936" y="452" width="280" height="56" rx="10" fill="#141d2b" stroke="#2d3b4f"/>
+  <text class="m" x="952" y="474" font-size="9.5" fill="#fda4af">strong tier &gt; 70% of spend</text>
+  <text class="t mu" x="952" y="492" font-size="10">move calls to the cheap tier</text>
+</svg>
