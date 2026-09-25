@@ -68,7 +68,7 @@ def _outcome(state: dict, max_revisions: int) -> str:
 
 
 async def _run_graph(ctx: RunContext, args: argparse.Namespace, run_id: str) -> dict:
-    with checkpointer(DEFAULT_CHECKPOINT_DB) as saver:
+    async with checkpointer(DEFAULT_CHECKPOINT_DB) as saver:
         if saver is None:
             print("note: langgraph-checkpoint-sqlite not installed; "
                   "this run will not be resumable.\n")

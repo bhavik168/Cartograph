@@ -241,3 +241,33 @@ async def test_unevidenced_source_is_dropped_by_the_finalizer(tmp_path):
     assert statements == ["grounded"]
     assert "invented" in state["draft"].open_questions
     assert any("nowhere.md" in lim for lim in state["draft"].limitations)
+
+
+# -- persistence --------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cli_graph_run_writes_async_checkpoints(tmp_path, monkeypatch):
+    """The real ``cli._run_graph`` path, compiled WITH the SQLite checkpointer.
+
+    Every other graph test compiles without one, which is how a sync saver
+    under ``ainvoke`` shipped: it raises on the first checkpoint write.
+    """
+    import argparse
+
+    import cli
+    from agent.memory import DEFAULT_CHECKPOINT_DB, checkpointer
+
+    monkeypatch.chdir(tmp_path)
+    ctx = make_ctx(tmp_path / "run", script_for([Critique(passed=True)]))
+    args = argparse.Namespace(question="q", thread_id="thread-1", recursion_limit=50)
+
+    state = await cli._run_graph(ctx, args, "run-1")
+
+    assert state["draft"] is not None
+    assert (tmp_path / DEFAULT_CHECKPOINT_DB).exists()
+    async with checkpointer(DEFAULT_CHECKPOINT_DB) as saver:
+        assert saver is not None, "langgraph-checkpoint-sqlite is a hard requirement"
+        saved = await saver.aget_tuple({"configurable": {"thread_id": "thread-1"}})
+    assert saved is not None
+    assert saved.checkpoint["channel_values"]["draft"].claims

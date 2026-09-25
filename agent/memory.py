@@ -2,8 +2,8 @@
 
 Two distinct kinds of memory:
 
-*Checkpointing* — LangGraph's ``SqliteSaver`` writes the full state after every
-super-step, keyed by thread id. A crashed or budget-halted run can be resumed
+*Checkpointing* — LangGraph's ``AsyncSqliteSaver`` writes the full state after
+every super-step, keyed by thread id. A crashed or budget-halted run can be resumed
 by re-invoking the graph with the same thread id.
 
 *Scratchpad* — a short natural-language summary carried across revision cycles.
@@ -16,8 +16,8 @@ rather than assumed.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -39,9 +39,15 @@ class ScratchpadSummary(BaseModel):
     unresolved: list[str] = Field(default_factory=list)
 
 
-@contextmanager
-def checkpointer(db_path: Path | str = DEFAULT_CHECKPOINT_DB) -> Iterator[object | None]:
+@asynccontextmanager
+async def checkpointer(
+    db_path: Path | str = DEFAULT_CHECKPOINT_DB,
+) -> AsyncIterator[object | None]:
     """Yield a LangGraph checkpointer, or ``None`` if the extra isn't installed.
+
+    Async because every run path drives the graph with ``ainvoke``/``astream``,
+    and the sync ``SqliteSaver`` raises ``NotImplementedError`` from its async
+    methods — a sync saver here fails the first checkpoint write of every run.
 
     The graph compiles either way; without a saver you lose resumability, not
     correctness, so a missing optional dependency should not stop a run.
@@ -49,11 +55,11 @@ def checkpointer(db_path: Path | str = DEFAULT_CHECKPOINT_DB) -> Iterator[object
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-    except ImportError:
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    except ImportError:  # the extra, or its aiosqlite dependency, is missing
         yield None
         return
-    with SqliteSaver.from_conn_string(str(db_path)) as saver:
+    async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
         yield saver
 
 
