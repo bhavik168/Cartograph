@@ -7,6 +7,10 @@ giving the researcher node something real to call.
 
 Documents are chunked by paragraph so a hit returns a quotable passage rather
 than a whole file.
+
+Only files that resolve inside the corpus directory are indexed: a symlink
+pointing out of it is skipped, so dropping ``corpus/notes.md -> ~/.ssh/...`` into
+the folder does not put that file one search away from a model.
 """
 
 from __future__ import annotations
@@ -18,6 +22,8 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from agent.guards import PathOutsideRoot, resolve_within
+
 CORPUS_DIR = Path("corpus")
 SUFFIXES = {".txt", ".md"}
 MAX_CHUNK_CHARS = 1200
@@ -26,8 +32,12 @@ MAX_CHUNK_CHARS = 1200
 @dataclass(frozen=True)
 class Chunk:
     source: str
+    """Basename. What evidence cites, so the graph's grounding check keys on it."""
+
     index: int
     text: str
+    doc_id: str = ""
+    """Path relative to the corpus root, POSIX-style. Unique where ``source`` may not be."""
 
 
 def _tokenize(text: str) -> list[str]:
@@ -60,12 +70,17 @@ def load_chunks(corpus_dir: Path | str = CORPUS_DIR) -> list[Chunk]:
             continue
         if path.name.lower() == "readme.md":
             continue
+        doc_id = path.relative_to(corpus_dir).as_posix()
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            resolved = resolve_within(corpus_dir, doc_id)
+        except PathOutsideRoot:
+            continue
+        try:
+            text = resolved.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for i, chunk in enumerate(_split(text)):
-            chunks.append(Chunk(source=path.name, index=i, text=chunk))
+            chunks.append(Chunk(source=path.name, index=i, text=chunk, doc_id=doc_id))
     return chunks
 
 

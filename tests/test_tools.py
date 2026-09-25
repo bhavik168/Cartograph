@@ -30,6 +30,27 @@ def test_only_text_documents_are_indexed(corpus):
     assert sources == {"retention.md", "hiring.txt"}  # README and PDF excluded
 
 
+def test_doc_id_is_the_path_relative_to_the_corpus_root(corpus):
+    (corpus / "q3").mkdir()
+    (corpus / "q3" / "retention.md").write_text("A second retention note.\n", encoding="utf-8")
+    ids = {(c.source, c.doc_id) for c in load_chunks(corpus)}
+    assert ("retention.md", "retention.md") in ids
+    assert ("retention.md", "q3/retention.md") in ids  # same basename, distinct doc_id
+
+
+def test_a_symlink_out_of_the_corpus_is_not_indexed(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "notes.md").write_text("Public quarterly notes.\n", encoding="utf-8")
+    secret = tmp_path / "secret.md"
+    secret.write_text("The launch codes are 0000.\n", encoding="utf-8")
+    (corpus / "leak.md").symlink_to(secret)
+
+    chunks = load_chunks(corpus)
+    assert {c.doc_id for c in chunks} == {"notes.md"}
+    assert not any("launch codes" in c.text for c in chunks)
+
+
 def test_paragraphs_become_separate_chunks(corpus):
     chunks = [c for c in load_chunks(corpus) if c.source == "retention.md"]
     assert len(chunks) == 2
