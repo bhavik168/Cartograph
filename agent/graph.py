@@ -85,6 +85,23 @@ def route_after_revise(state: AnalystState) -> Literal["supervisor", "finalizer"
     return "finalizer" if state.get("halted_reason") else "supervisor"
 
 
+def describe_outcome(state: AnalystState, max_revisions: int) -> str:
+    """One line on how a finished run ended, for the audit header."""
+    critique = state.get("critique")
+    revisions = state.get("revision_count", 0)
+    if state.get("halted_reason"):
+        return f"halted — {state['halted_reason']}"
+    if critique is None:
+        return "finalized without a critique"
+    if critique.passed:
+        return (
+            "passed critic on the first pass"
+            if revisions == 0
+            else f"passed critic on revision {revisions} of max {max_revisions}"
+        )
+    return f"failed critic after {revisions} revision(s) of max {max_revisions}"
+
+
 def build_graph(ctx: RunContext, checkpointer=None):
     """Compile the graph. Pass a checkpointer to make runs resumable by thread id."""
     builder = StateGraph(AnalystState)

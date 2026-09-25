@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+build/
 
 # Run artifacts are produced locally; no results ship in this repo.
 runs/*

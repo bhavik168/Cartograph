@@ -36,6 +36,8 @@ def render_markdown(audit: Audit) -> str:
         w(f'Question: "{audit.question}"')
     if audit.outcome:
         w(f"Outcome: {audit.outcome}")
+    if audit.origin:
+        w(f"Origin: {audit.origin}")
     w("")
 
     w("## Totals")
@@ -177,6 +179,7 @@ def write_report(
     question: str = "",
     outcome: str = "",
     wall_clock_s: float = 0.0,
+    origin: str = "",
 ) -> Audit:
     """Build the audit and write both files. Reads tokens.jsonl if events are omitted."""
     run_dir = Path(run_dir)
@@ -192,6 +195,7 @@ def write_report(
         question=question,
         outcome=outcome,
         wall_clock_s=wall_clock_s,
+        origin=origin,
     )
     (run_dir / "audit.json").write_text(
         json.dumps(audit.model_dump(), indent=2), encoding="utf-8"

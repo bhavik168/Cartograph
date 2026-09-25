@@ -85,6 +85,8 @@ class Audit(BaseModel):
     run_id: str = ""
     question: str = ""
     outcome: str = ""
+    origin: str = ""
+    """What started the run: "cli" or "mcp". Empty for audits written before it existed."""
     wall_clock_s: float = 0.0
 
     llm_calls: int = 0
@@ -193,12 +195,14 @@ def build_audit(
     question: str = "",
     outcome: str = "",
     wall_clock_s: float = 0.0,
+    origin: str = "",
 ) -> Audit:
     """Aggregate a token stream. Safe on an empty stream — no division by zero."""
     audit = Audit(
         run_id=run_id,
         question=question,
         outcome=outcome,
+        origin=origin,
         wall_clock_s=wall_clock_s,
         llm_calls=len(events),
     )

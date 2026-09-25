@@ -27,7 +27,7 @@ from pathlib import Path
 
 from agent.auditor.meter import BudgetExceeded, TokenMeter
 from agent.auditor.report import write_report
-from agent.graph import build_graph
+from agent.graph import build_graph, describe_outcome
 from agent.llm import LLMClient, LLMConfig, LLMError, available_providers
 from agent.memory import DEFAULT_CHECKPOINT_DB, checkpointer
 from agent.runtime import RunContext
@@ -49,22 +49,6 @@ def _load_env() -> None:
 
 def new_run_id() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-
-
-def _outcome(state: dict, max_revisions: int) -> str:
-    critique = state.get("critique")
-    revisions = state.get("revision_count", 0)
-    if state.get("halted_reason"):
-        return f"halted — {state['halted_reason']}"
-    if critique is None:
-        return "finalized without a critique"
-    if critique.passed:
-        return (
-            "passed critic on the first pass"
-            if revisions == 0
-            else f"passed critic on revision {revisions} of max {max_revisions}"
-        )
-    return f"failed critic after {revisions} revision(s) of max {max_revisions}"
 
 
 async def _run_graph(ctx: RunContext, args: argparse.Namespace, run_id: str) -> dict:
@@ -145,8 +129,13 @@ async def run_ask(args: argparse.Namespace) -> int:
             meter.events,
             run_id=run_id,
             question=args.question,
-            outcome=_outcome(state, args.max_revisions) if state else "run did not complete",
+            outcome=(
+                describe_outcome(state, args.max_revisions)
+                if state
+                else "run did not complete"
+            ),
             wall_clock_s=wall_clock,
+            origin="cli",
         )
         meter.close()
         ctx.close()
@@ -191,7 +180,20 @@ def run_audit(args: argparse.Namespace) -> int:
         except json.JSONDecodeError:
             pass
 
-    audit = write_report(run_dir, run_id=args.run_id, question=question)
+    # Re-rendering recomputes from tokens.jsonl but must not forget who ran it.
+    previous: dict = {}
+    try:
+        previous = json.loads((run_dir / "audit.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    audit = write_report(
+        run_dir,
+        run_id=args.run_id,
+        question=question,
+        outcome=previous.get("outcome", ""),
+        origin=previous.get("origin", ""),
+    )
     if args.json:
         print(json.dumps(audit.model_dump(), indent=2))
     else:

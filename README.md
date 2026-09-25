@@ -36,6 +36,7 @@ Bring your own key, run it locally, read the report it writes.
 | 🔀 **Failover**           | Anthropic primary, OpenAI fallback — exercised in tests, not just written             |
 | 🧪 **Offline tests**      | the whole graph runs in CI against a stubbed LLM: no key, no network, no cost         |
 | 🔌 **MCP tool server**    | tools are discovered and called over MCP; quarantine is enforced in the client        |
+| 🛰️ **MCP research server** | the whole graph as six MCP tools: start a brief, poll it, read the brief and audit    |
 | 🤝 **Two runtimes**       | the same pipeline on LangGraph or the OpenAI Agents SDK, one audit trail for both     |
 
 </div>
@@ -123,6 +124,7 @@ text. There is no path from a tool to the model that skips it.
 | Nodes                                                          | [`agent/nodes/`](agent/nodes)                  |
 | Tools — BM25, calculator, fetch                                | [`agent/tools/`](agent/tools)                  |
 | The same tools served over MCP (stdio)                         | [`mcp/server.py`](mcp/server.py)               |
+| The graph itself served over MCP, for any model client         | [`cartograph_mcp/`](cartograph_mcp)            |
 | Tool discovery + calls, MCP or in-process, quarantine enforced | [`agent/toolsurface.py`](agent/toolsurface.py) |
 | The Agents SDK runtime                                         | [`agent/sdk_runtime/`](agent/sdk_runtime)      |
 | Meter, attribution, pricing, report                            | [`agent/auditor/`](agent/auditor)              |
@@ -153,6 +155,14 @@ Every call carries a **cause**, and every cause has a class:
 | `schema_repair` | retry after a Pydantic `ValidationError` | 🔴 **waste** |
 | `revision` | any call made during a critic-driven revision pass | 🔴 **waste** |
 | `retry_transient` | rate-limit / 5xx retries | 🔴 **waste** |
+
+**Causes describe why tokens were spent, not who asked for them.** There is no
+`mcp` cause. A run started over MCP makes exactly the calls a CLI run makes,
+from the same nodes, and the MCP layer makes no model calls of its own. An
+origin-based cause would pull planning, research and revision tokens out of
+their real causes, and the waste ratio would stop meaning the same thing
+across runs. Origin is recorded once per run instead: `origin` on the audit
+(`"cli"` or `"mcp"`) and in the MCP server's `run.json`.
 
 > [!IMPORTANT]
 > **Waste ratio = `waste_tokens / total_tokens`** — tokens that produced no new
@@ -296,6 +306,161 @@ transport, with no subprocess.
 
 ---
 
+## Cartograph as an MCP server
+
+[`cartograph_mcp/`](cartograph_mcp) exposes the research graph itself — not just
+its tools — to any MCP client, so a model can start a brief, watch it work, and
+read the result and its token audit. It is a protocol surface over the graph that
+already exists: runs are the same `build_graph` + `LLMClient` + `TokenMeter` +
+SQLite checkpointer the CLI uses, and they write the same run directory.
+
+It is not the same server as [`mcp/server.py`](mcp/server.py). That one serves the
+three raw tools to Cartograph's *own* runtimes and leaves quarantine to that
+trusted client. Here the client is an arbitrary model, so this server quarantines
+on its own side.
+
+### Tools
+
+Six tools. Every input model forbids unknown keys, and the advertised JSON schema
+is generated from it, so the bounds a caller sees are the ones enforced.
+
+| Tool | Arguments (bounds) | Returns |
+|---|---|---|
+| `corpus_search` | `query` str, 1–500 chars · `top_k` int, 1–10, default 4 | `backend`, `hit_count`, `untrusted_content.hits[]` of `{doc_id, chunk, score, text}` |
+| `calculator` | `expression` str, 1–200 chars | `{expression, value}` |
+| `start_brief` | `question` str, 1–2000 chars · `thread_id` optional, `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, must be unused · `max_revisions` optional int, 0–2 · `max_usd` optional float, > 0 | `{run_id, thread_id, status: "planning", max_revisions, max_usd}` — returns at once |
+| `get_run_status` | `run_id` (same pattern) | `status`, `current_node`, `revision_count`, `llm_calls`, `tokens_spent`, `est_usd_spent`, `max_usd`, `finalized_reason`, `failure`, `untrusted_content.{routing, findings}` |
+| `get_brief` | `run_id` | `finalized_reason`, `reason_detail`, `revision_count`, `untrusted_content.brief` (an unmodified `Brief`) |
+| `get_token_audit` | `run_id` | `origin`, token totals, `waste_ratio`, `by_cause[]`, `by_node[]` — read from the run's `audit.json` |
+
+`finalized_reason` is one of `passed_critic`, `max_revisions` (failed the critic
+with no revisions left), `budget_ceiling` (halted by the USD ceiling), or
+`no_critique`. The graph's own honest-limitations entry is also in the brief.
+
+`get_run_status` is the only place the routing decision appears. `start_brief`
+never waits for the supervisor, so its output is the same shape every time.
+
+**Results have two faces.** `structuredContent` is the typed payload. Everything
+derived from outside the process — corpus text, filenames, and model output over
+them — sits under one `untrusted_content` key, with `injection_flags` next to it.
+The text content block is that same payload rendered through `guards.quarantine`:
+delimited, flagged inline, capped. The `Brief` is not modified to carry
+delimiters. The brief on the wire is the `brief.json` on disk.
+
+**Errors are typed.** Every failure is an `isError` result with
+`structuredContent = {"error": {"code", "message", "retryable", "details"}}`.
+Branch on `code`:
+
+| Code | When | Retryable |
+|---|---|:-:|
+| `INVALID_ARGUMENTS` | input failed its schema (`details.fields[]` names each field and problem, never the rejected value), or the calculator refused the expression | |
+| `UNKNOWN_TOOL` | no such tool | |
+| `UNKNOWN_RUN` | no run with that id was started by this server | |
+| `RUN_IN_PROGRESS` | `get_brief` / `get_token_audit` before the run finalized | ✓ |
+| `RUN_FAILED` | the run ended without a brief (all providers failed, server restart mid-run) | |
+| `CORPUS_NOT_INDEXED` | the corpus root has no `.md`/`.txt` documents | |
+| `BUDGET_EXCEEDED` | the process-wide USD ceiling is spent or reserved | |
+| `RUN_LIMIT_REACHED` | too many runs in flight | ✓ |
+| `THREAD_EXISTS` | `thread_id` already has checkpoints | |
+| `PATH_OUTSIDE_ROOT` | an id resolved outside its root (defence in depth; the id pattern should stop it first) | |
+| `PROVIDER_UNAVAILABLE` | no LLM provider key on the server | |
+| `INTERNAL` | unexpected fault; logged server-side, no traceback returned | |
+
+### Client config
+
+```bash
+pip install -e .        # installs the cartograph-mcp console script
+```
+
+```json
+{
+  "mcpServers": {
+    "cartograph": {
+      "command": "cartograph-mcp",
+      "args": ["--corpus-root", "/absolute/path/to/corpus", "--runs-root", "/absolute/path/to/runs"],
+      "env": {
+        "ANTHROPIC_API_KEY": "sk-ant-...",
+        "CARTOGRAPH_MCP_MAX_USD": "0.50",
+        "CARTOGRAPH_MCP_TOTAL_MAX_USD": "5.00"
+      }
+    }
+  }
+}
+```
+
+Without installing, use `"command": "/path/to/.venv/bin/python", "args": ["-m",
+"cartograph_mcp", ...]` with `"cwd"` set to the repo. Use absolute paths, since
+clients launch servers from a working directory of their own.
+
+| Flag | Env | Default |
+|---|---|---|
+| `--corpus-root` | `CARTOGRAPH_MCP_CORPUS_ROOT` | **none, required** |
+| `--runs-root` | `CARTOGRAPH_MCP_RUNS_ROOT` | `./runs` |
+| `--max-usd` | `CARTOGRAPH_MCP_MAX_USD` | `0.50` per run |
+| `--total-max-usd` | `CARTOGRAPH_MCP_TOTAL_MAX_USD` | `5.00` per server process |
+| `--max-concurrent-runs` | `CARTOGRAPH_MCP_MAX_CONCURRENT_RUNS` | `2` |
+| `--enable-fetch-url` | `CARTOGRAPH_MCP_ENABLE_FETCH_URL=1` | off |
+
+### Security model
+
+- **Configuration is the permission surface, fixed at boot.** A caller can ask for
+  less (a lower `max_usd`, fewer revisions) but never more than the server allows.
+  The server refuses to start without an existing corpus root, and refuses to start
+  if any configured model is missing from `agent/auditor/pricing.py`: the meter
+  prices an unpriced model at $0, which would silently disable every USD ceiling.
+- **Containment.** No tool accepts a path. Untrusted names only become paths through
+  `guards.resolve_within`, which resolves both the root and the candidate
+  (collapsing `..`, following symlinks) and checks `Path.is_relative_to` on the
+  resolved result, not a string prefix. A prefix check would accept a sibling like
+  `corpus-evil/` and a symlink like `corpus/notes.md -> ~/.ssh/id_rsa`. The corpus
+  index skips any file that resolves outside the root. That applies to the in-graph
+  tool too. Run ids pass the id pattern and are then containment-checked against
+  the runs root.
+- **Quarantine on every path.** Direct tool results, run status, briefs and audits
+  are all rendered through `guards.quarantine`. Inside a run, the researcher's tools
+  are the in-process surface pinned to the corpus root, and they still go through
+  `ToolSurface.call`, the only public call path, which quarantines. The tests
+  assert every one of these paths calls it.
+- **`fetch_url` is off by default** and only a server flag turns it on. When the
+  server starts, it overwrites `CARTOGRAPHER_ENABLE_FETCH_URL` to match its own flag,
+  so a value inherited from the MCP client's environment cannot enable network
+  access. It stays off for the same reasons as in the graph. A brief should be
+  reproducible from a fixed corpus. Remote HTML is also the richest source of prompt
+  injection, and a model-driven client is the caller most likely to be steered
+  toward a hostile page. It is not exposed as an MCP tool at all. The flag only
+  controls whether research runs may bind it.
+- **Budget, three layers.** (1) Each run gets `min(caller's max_usd, server
+  max_usd, what remains of the process-wide ceiling)`. (2) Each in-flight run
+  reserves its full ceiling against the process-wide total, so concurrent runs
+  cannot jointly overspend. (3) The ceiling is enforced by the graph's own budget
+  check, and a run that crosses it finalizes with `finalized_reason:
+  "budget_ceiling"`.
+- **Attribution.** Every LLM call in an MCP-started run is a graph node's call
+  through `LLMClient.call()` with its usual `node` and `cause`. The server makes no
+  model calls of its own. The run's origin is recorded once, as `origin: "mcp"` in
+  `run.json` and on the audit.
+
+### Limitations
+
+- **One-pass budget overrun.** The budget is checked between revision passes, not
+  inside one. A pass already under way runs to completion, so a run can overshoot
+  its ceiling by up to one pass. The overshoot counts against the process-wide
+  total.
+- **Runs live in the server process.** Finished runs remain readable after a restart
+  (from `run.json`, `brief.json`, `audit.json` and the checkpoint). A run that was
+  still going when the server stopped is reported as failed. It is not resumed.
+- **The corpus index is built once per process.** Documents added while the server
+  is running are not searchable until it restarts.
+- **Only MCP-started runs are visible.** CLI runs in the same runs root return
+  `UNKNOWN_RUN`.
+- **`est_usd_spent` and the budget use the hand-maintained price table**, like
+  every other cost figure in this repo.
+- **Quarantine is a mitigation.** A client that reads `structuredContent` sees
+  unwrapped strings. The shape marks them `untrusted_content` and lists
+  `injection_flags`, but it cannot stop a model from following them.
+
+---
+
 ## Commands
 
 | Command                                        | What it does                                        |
@@ -307,6 +472,7 @@ transport, with no subprocess.
 | `python cli.py ask "..." --runtime agents-sdk` | run the same pipeline on the OpenAI Agents SDK      |
 | `python cli.py ask "..." --no-mcp`             | call tools in-process instead of via the MCP server |
 | `python mcp/server.py`                         | serve the tools over MCP on stdio                   |
+| `cartograph-mcp --corpus-root ./corpus`        | serve the research graph over MCP on stdio          |
 | `python cli.py audit <run_id>`                 | re-render a past run's audit                        |
 | `python cli.py audit <run_id> --json`          | machine-readable audit to stdout                    |
 | `python cli.py runs`                           | list runs with cost and waste ratio                 |
@@ -334,6 +500,11 @@ That one seam makes the whole orchestration layer testable offline — CI drives
   schema as the langgraph runtime on identical canned inputs
 - ✅ the output guardrail rejects a zero-evidence `Claim`
 - ✅ token events from both runtimes aggregate correctly in the auditor
+- ✅ the CLI's graph run works with the SQLite checkpointer attached
+- ✅ the MCP research server rejects out-of-bounds arguments with a typed error,
+  returns `UNKNOWN_RUN` and `RUN_IN_PROGRESS` as typed errors, cannot reach a
+  corpus file symlinked outside its root, quarantines every result path, and
+  surfaces a budget-ceiling finalization as `finalized_reason`
 
 CI runs exactly these, once per runtime, and exercises the MCP server over stdio
 once. No key, no network, no cost. Live runs stay local.
@@ -415,6 +586,11 @@ agent/
     └── report.py        renders audit.md + audit.json
 
 mcp/server.py        the tools, served over MCP (stdio)
+cartograph_mcp/      the research graph as an MCP server (stdio)
+├── server.py        six tools, typed errors, quarantined results
+├── runs.py          background runs over the existing graph
+├── schemas.py       bounded inputs, outputs, error codes
+└── config.py        corpus root, ceilings, fetch flag — fixed at boot
 cli.py               ask / audit / runs
 docs/                architecture and instrumentation diagrams
 tests/               all offline, all stubbed
@@ -437,6 +613,14 @@ CARTOGRAPHER_STRONG_MODEL=claude-sonnet-4-5-20250929
 CARTOGRAPHER_OPENAI_CHEAP_MODEL=gpt-4o-mini
 CARTOGRAPHER_OPENAI_STRONG_MODEL=gpt-4o
 CARTOGRAPHER_ENABLE_FETCH_URL=0 # network access for the fetch tool
+
+# cartograph-mcp (see "Cartograph as an MCP server")
+CARTOGRAPH_MCP_CORPUS_ROOT=     # required
+CARTOGRAPH_MCP_RUNS_ROOT=runs
+CARTOGRAPH_MCP_MAX_USD=0.50
+CARTOGRAPH_MCP_TOTAL_MAX_USD=5.00
+CARTOGRAPH_MCP_MAX_CONCURRENT_RUNS=2
+CARTOGRAPH_MCP_ENABLE_FETCH_URL=0
 ```
 
 </details>

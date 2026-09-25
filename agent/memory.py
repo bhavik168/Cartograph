@@ -27,6 +27,17 @@ from agent.schemas import Finding
 
 DEFAULT_CHECKPOINT_DB = Path("runs/checkpoints.sqlite")
 
+# The only non-builtin types the graph state holds (see agent.state). An
+# explicit allowlist rather than LangGraph's permissive default: resuming a
+# thread then cannot deserialize anything else a tampered checkpoint names.
+CHECKPOINT_TYPES: tuple[tuple[str, str], ...] = tuple(
+    ("agent.schemas", name)
+    for name in (
+        "Brief", "Claim", "Critique", "Evidence", "Finding",
+        "RoutingDecision", "Span", "SubQuestion",
+    )
+)
+
 # Compact only once the raw findings are big enough that summarising them is
 # cheaper than carrying them. Below this, compaction costs more than it saves.
 COMPACTION_THRESHOLD_TOKENS = 1500
@@ -55,12 +66,15 @@ async def checkpointer(
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        import aiosqlite
+        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
     except ImportError:  # the extra, or its aiosqlite dependency, is missing
         yield None
         return
-    async with AsyncSqliteSaver.from_conn_string(str(db_path)) as saver:
-        yield saver
+    serde = JsonPlusSerializer(allowed_msgpack_modules=CHECKPOINT_TYPES)
+    async with aiosqlite.connect(str(db_path)) as conn:
+        yield AsyncSqliteSaver(conn, serde=serde)
 
 
 def render_findings(findings: list[Finding], limit: int | None = None) -> str:
