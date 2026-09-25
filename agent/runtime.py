@@ -16,6 +16,7 @@ from pathlib import Path
 from agent.auditor.meter import TokenMeter
 from agent.llm import LLMClient
 from agent.schemas import Span
+from agent.toolsurface import ToolSurface
 
 MAX_TOOL_ITERATIONS = 4
 MAX_RESEARCHERS = 3
@@ -31,6 +32,8 @@ class RunContext:
     max_tool_iterations: int = MAX_TOOL_ITERATIONS
     max_researchers: int = MAX_RESEARCHERS
     corpus_dir: str = "corpus"
+    # None means in-process tools (``--no-mcp``, and the offline suite).
+    tools: ToolSurface | None = None
     started_at: float = field(default_factory=time.time)
     _trace_fh: object | None = field(default=None, repr=False)
 

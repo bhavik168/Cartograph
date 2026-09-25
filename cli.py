@@ -3,12 +3,15 @@
 
     python cli.py ask "your research question"
     python cli.py ask "..." --max-usd 0.50 --max-revisions 1
+    python cli.py ask "..." --runtime agents-sdk     # OpenAI Agents SDK runtime
+    python cli.py ask "..." --no-mcp                 # in-process tools, no subprocess
     python cli.py audit <run_id>
     python cli.py runs
 
 One command produces one run directory under ``runs/<run_id>/`` containing
-brief.json, trace.jsonl, tokens.jsonl, audit.json and audit.md. Nothing is
-hosted and nothing is pre-run: every number you see came from your own run.
+brief.json, trace.jsonl, tokens.jsonl, audit.json and audit.md (plus
+agents_trace.jsonl under the agents-sdk runtime). Nothing is hosted and nothing
+is pre-run: every number you see came from your own run.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import asyncio
 import json
 import sys
 import time
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,7 +31,9 @@ from agent.graph import build_graph
 from agent.llm import LLMClient, LLMConfig, LLMError, available_providers
 from agent.memory import DEFAULT_CHECKPOINT_DB, checkpointer
 from agent.runtime import RunContext
+from agent.sdk_runtime.errors import GuardrailRejected
 from agent.state import MAX_REVISIONS, initial_state
+from agent.toolsurface import MCPTools
 
 RUNS_DIR = Path("runs")
 
@@ -61,6 +67,19 @@ def _outcome(state: dict, max_revisions: int) -> str:
     return f"failed critic after {revisions} revision(s) of max {max_revisions}"
 
 
+async def _run_graph(ctx: RunContext, args: argparse.Namespace, run_id: str) -> dict:
+    with checkpointer(DEFAULT_CHECKPOINT_DB) as saver:
+        if saver is None:
+            print("note: langgraph-checkpoint-sqlite not installed; "
+                  "this run will not be resumable.\n")
+        graph = build_graph(ctx, checkpointer=saver)
+        config = {
+            "configurable": {"thread_id": args.thread_id or run_id},
+            "recursion_limit": args.recursion_limit,
+        }
+        return await graph.ainvoke(initial_state(args.question, run_id), config)
+
+
 async def run_ask(args: argparse.Namespace) -> int:
     _load_env()
     providers = available_providers()
@@ -78,7 +97,11 @@ async def run_ask(args: argparse.Namespace) -> int:
     run_dir = RUNS_DIR / run_id
     started = time.time()
 
-    print(f"run {run_id} · providers: {' -> '.join(providers)}")
+    tool_source = "in-process" if args.no_mcp else "mcp"
+    print(
+        f"run {run_id} · runtime: {args.runtime} · tools: {tool_source} · "
+        f"providers: {' -> '.join(providers)}"
+    )
     print(f"question: {args.question}\n")
 
     meter = TokenMeter(path=run_dir / "tokens.jsonl", max_usd=args.max_usd)
@@ -94,16 +117,18 @@ async def run_ask(args: argparse.Namespace) -> int:
     state: dict = {}
     exit_code = 0
     try:
-        with checkpointer(DEFAULT_CHECKPOINT_DB) as saver:
-            if saver is None:
-                print("note: langgraph-checkpoint-sqlite not installed; "
-                      "this run will not be resumable.\n")
-            graph = build_graph(ctx, checkpointer=saver)
-            config = {
-                "configurable": {"thread_id": args.thread_id or run_id},
-                "recursion_limit": args.recursion_limit,
-            }
-            state = await graph.ainvoke(initial_state(args.question, run_id), config)
+        async with AsyncExitStack() as stack:
+            if not args.no_mcp:
+                ctx.tools = await stack.enter_async_context(MCPTools.stdio())
+            if args.runtime == "agents-sdk":
+                from agent.sdk_runtime.pipeline import run_pipeline
+
+                state = await run_pipeline(ctx, args.question)
+            else:
+                state = await _run_graph(ctx, args, run_id)
+    except GuardrailRejected as exc:
+        print(f"\noutput guardrail failed the run: {exc}", file=sys.stderr)
+        exit_code = 1
     except BudgetExceeded as exc:
         print(f"\nbudget ceiling hit: {exc}", file=sys.stderr)
         exit_code = 1
@@ -216,6 +241,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="checkpointer thread id; reuse one to resume a halted run",
     )
     ask.add_argument("--recursion-limit", type=int, default=50)
+    ask.add_argument(
+        "--runtime",
+        choices=["langgraph", "agents-sdk"],
+        default="langgraph",
+        help="orchestration runtime; both write the same brief.json and tokens.jsonl",
+    )
+    ask.add_argument(
+        "--no-mcp",
+        action="store_true",
+        help="call the tools in-process instead of through the MCP server subprocess",
+    )
 
     audit = sub.add_parser("audit", help="re-render the audit for an existing run")
     audit.add_argument("run_id")

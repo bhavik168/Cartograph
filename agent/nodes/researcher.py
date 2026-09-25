@@ -11,8 +11,10 @@ final structured call to extract a ``Finding``. Splitting the loop from the
 extraction keeps the schema out of the tool-calling context, which measurably
 reduces schema repairs.
 
-Every tool result passes through ``guards.quarantine`` before it is allowed
-into the message list. There is no path from a tool to the model that skips it.
+Tools come from ``ctx.tools`` — the MCP server by default, the in-process
+tools under ``--no-mcp``. Either way every result passes through
+``guards.quarantine`` inside ``ToolSurface.call`` before it is allowed into the
+message list. There is no path from a tool to the model that skips it.
 """
 
 from __future__ import annotations
@@ -23,12 +25,11 @@ from collections.abc import Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent import guards
 from agent.auditor.meter import estimate_tokens
 from agent.runtime import RunContext
 from agent.schemas import Finding, InputComposition, Span, SubQuestion
 from agent.state import AnalystState
-from agent.tools import active_tools, tool_map
+from agent.toolsurface import InProcessTools
 
 SYSTEM = """You are a researcher. Answer exactly one sub-question using the tools
 available; do not answer from prior knowledge.
@@ -55,8 +56,8 @@ async def _run_one(
     directives: list[str],
 ) -> tuple[Finding, list[Span], list[str]]:
     started = time.perf_counter()
-    tools = active_tools()
-    registry = tool_map()
+    surface = ctx.tools or InProcessTools()
+    tools = await surface.bindable()
     spans: list[Span] = []
     flags: list[str] = []
     tools_used: list[str] = []
@@ -93,17 +94,8 @@ async def _run_one(
         for call in calls:
             name = call.get("name", "")
             args = call.get("args", {}) or {}
-            tool_obj = registry.get(name)
-            if tool_obj is None:
-                raw = f"TOOL ERROR: no such tool {name!r}"
-            else:
-                try:
-                    raw = str(await asyncio.to_thread(tool_obj.invoke, args))
-                except Exception as exc:  # noqa: BLE001 - returned to the model
-                    raw = f"TOOL ERROR: {type(exc).__name__}: {exc}"
-
-            # The one and only entry point for untrusted content.
-            result = guards.quarantine(raw, source=name or "unknown_tool")
+            # Quarantined inside the surface: raw output never reaches here.
+            result = await surface.call(name, args)
             tool_output_tokens += result.final_tokens
             tools_used.append(name)
             if result.is_suspicious:

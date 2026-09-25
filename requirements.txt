@@ -7,6 +7,8 @@ pydantic>=2.9
 python-dotenv>=1.0.1
 rank-bm25>=0.2.2
 httpx>=0.27
+mcp>=2.0,<3          # tool server + client (MCPServer / Client are the 2.x API)
+openai-agents>=0.22  # --runtime agents-sdk
 
 # dev
 pytest>=8.3

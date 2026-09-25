@@ -20,10 +20,22 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Lint
         run: ruff check .
-      # No API key is configured, and none is needed: the graph runs against a
-      # stubbed LLM. A green CI run costs nothing and calls no provider.
-      - name: Test
-        run: pytest -q
+      # No API key is configured, and none is needed: both runtimes run against
+      # a stubbed LLM. A green CI run costs nothing and calls no provider.
+      - name: Test — langgraph runtime (+ auditor, tools, MCP in-memory)
+        run: pytest -q --ignore=tests/test_agents_runtime.py
         env:
           ANTHROPIC_API_KEY: ""
           OPENAI_API_KEY: ""
+      - name: Test — agents-sdk runtime (parity with langgraph on identical stubs)
+        run: pytest -q tests/test_agents_runtime.py
+        env:
+          ANTHROPIC_API_KEY: ""
+          OPENAI_API_KEY: ""
+      # The one place CI spawns mcp/server.py over stdio. Still offline.
+      - name: Test — MCP server over stdio
+        run: pytest -q tests/test_mcp.py -k stdio
+        env:
+          ANTHROPIC_API_KEY: ""
+          OPENAI_API_KEY: ""
+          CARTOGRAPH_MCP_STDIO_TEST: "1"

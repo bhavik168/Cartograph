@@ -27,14 +27,18 @@ Bring your own key, run it locally, read the report it writes.
 
 <div align="center">
 
-|  | |
-|---|---|
-| 🔁 **Cyclic graph** | the critic can route a failed draft back for revision — bounded, never infinite |
-| 🧬 **Schema-first** | every LLM call returns a validated Pydantic model, with a repair pass when it doesn't |
-| 🧮 **Token auditor** | per-node, per-cause, per-revision spend, and a **waste ratio** you can act on |
-| 🛡️ **Quarantined tools** | untrusted output is labelled, flagged and capped before it reaches a prompt |
-| 🔀 **Failover** | Anthropic primary, OpenAI fallback — exercised in tests, not just written |
-| 🧪 **Offline tests** | the whole graph runs in CI against a stubbed LLM: no key, no network, no cost |
+```
+|                           |                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------- |
+| 🔁 **Cyclic graph**       | the critic can route a failed draft back for revision — bounded, never infinite       |
+| 🧬 **Schema-first**       | every LLM call returns a validated Pydantic model, with a repair pass when it doesn't |
+| 🧮 **Token auditor**      | per-node, per-cause, per-revision spend, and a **waste ratio** you can act on         |
+| 🛡️ **Quarantined tools** | untrusted output is labelled, flagged and capped before it reaches a prompt           |
+| 🔀 **Failover**           | Anthropic primary, OpenAI fallback — exercised in tests, not just written             |
+| 🧪 **Offline tests**      | the whole graph runs in CI against a stubbed LLM: no key, no network, no cost         |
+| 🔌 **MCP tool server**    | tools are discovered and called over MCP; quarantine is enforced in the client        |
+| 🤝 **Two runtimes**       | the same pipeline on LangGraph or the OpenAI Agents SDK, one audit trail for both     |
+```
 
 </div>
 
@@ -44,8 +48,8 @@ Bring your own key, run it locally, read the report it writes.
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # set ANTHROPIC_API_KEY
-cp your-docs/*.md corpus/     # 5-15 plain-text documents
+cp .env.example .env # set ANTHROPIC_API_KEY
+cp your-docs/*.md corpus/ # 5-15 plain-text documents
 python cli.py ask "what does our corpus say about Q3 retention?"
 ```
 
@@ -53,11 +57,12 @@ One command produces one run directory:
 
 ```
 runs/20260815T142201Z/
-├── brief.json     the artifact: claims, evidence, confidence, limitations
-├── trace.jsonl    one span per node execution
-├── tokens.jsonl   one TokenEvent per LLM call, streamed as it happens
-├── audit.json     machine-readable audit
-└── audit.md       "where did the tokens go, and which were wasted?"
+├── brief.json the artifact: claims, evidence, confidence, limitations
+├── trace.jsonl one span per node execution
+├── tokens.jsonl one TokenEvent per LLM call, streamed as it happens
+├── audit.json machine-readable audit
+├── audit.md "where did the tokens go, and which were wasted?"
+└── agents_trace.jsonl the Agents SDK's own trace (--runtime agents-sdk only)
 ```
 
 > [!TIP]
@@ -69,7 +74,7 @@ runs/20260815T142201Z/
 ## Architecture
 
 <div align="center">
-  <img src="docs/architecture.svg" alt="Cartographer graph: supervisor routes to a fan-out of researchers or straight to the synthesizer; the synthesizer feeds the critic; a failing critique loops back through revise to the supervisor; passing goes to the finalizer." width="100%">
+<img src="docs/architecture.svg" alt="Cartographer graph: supervisor routes to a fan-out of researchers or straight to the synthesizer; the synthesizer feeds the critic; a failing critique loops back through revise to the supervisor; passing goes to the finalizer." width="100%">
 </div>
 
 **The cycle is the point.** The critic scores the draft against named criteria —
@@ -102,22 +107,29 @@ separately as **waste**. Tighten the schema prompt and that number drops.
 
 **Quarantine.** Every tool result passes through `guards.quarantine()` before it
 can reach a prompt: wrapped in a labelled untrusted block, injection patterns
-flagged inline rather than silently deleted, hard cap on length. There is no path
-from a tool to the model that skips it.
+flagged inline rather than silently deleted, hard cap on length. It is enforced
+in `ToolSurface.call()`, the only public way to run a tool under either runtime
+or either transport, and that method returns a `QuarantineResult`, never raw
+text. There is no path from a tool to the model that skips it.
 
 ### Where to look
 
-| Concept | File |
-|---|---|
-| Graph wiring, conditional edges, the bounded cycle | [`agent/graph.py`](agent/graph.py) |
-| State + reducers | [`agent/state.py`](agent/state.py) |
-| Every Pydantic model | [`agent/schemas.py`](agent/schemas.py) |
-| Provider routing, retry, failover, repair, metering | [`agent/llm.py`](agent/llm.py) |
-| Injection quarantine and context caps | [`agent/guards.py`](agent/guards.py) |
-| Checkpointer + scratchpad compaction | [`agent/memory.py`](agent/memory.py) |
-| Nodes | [`agent/nodes/`](agent/nodes) |
-| Tools — BM25, calculator, fetch | [`agent/tools/`](agent/tools) |
-| Meter, attribution, pricing, report | [`agent/auditor/`](agent/auditor) |
+```
+| Concept                                                        | File                                           |
+| -------------------------------------------------------------- | ---------------------------------------------- |
+| Graph wiring, conditional edges, the bounded cycle             | [`agent/graph.py`](agent/graph.py)             |
+| State + reducers                                               | [`agent/state.py`](agent/state.py)             |
+| Every Pydantic model                                           | [`agent/schemas.py`](agent/schemas.py)         |
+| Provider routing, retry, failover, repair, metering            | [`agent/llm.py`](agent/llm.py)                 |
+| Injection quarantine and context caps                          | [`agent/guards.py`](agent/guards.py)           |
+| Checkpointer + scratchpad compaction                           | [`agent/memory.py`](agent/memory.py)           |
+| Nodes                                                          | [`agent/nodes/`](agent/nodes)                  |
+| Tools — BM25, calculator, fetch                                | [`agent/tools/`](agent/tools)                  |
+| The same tools served over MCP (stdio)                         | [`mcp/server.py`](mcp/server.py)               |
+| Tool discovery + calls, MCP or in-process, quarantine enforced | [`agent/toolsurface.py`](agent/toolsurface.py) |
+| The Agents SDK runtime                                         | [`agent/sdk_runtime/`](agent/sdk_runtime)      |
+| Meter, attribution, pricing, report                            | [`agent/auditor/`](agent/auditor)              |
+```
 
 ---
 
@@ -127,7 +139,7 @@ Most projects print a total token count. That's a number, not an insight. The
 auditor answers *where did the tokens go, and which of them were wasted?*
 
 <div align="center">
-  <img src="docs/instrumentation.svg" alt="All five calling nodes funnel through llm.call, which emits one TokenEvent per call to tokens.jsonl; each event's cause is classified productive, overhead or waste, and the waste ratio drives rule-based recommendations." width="100%">
+<img src="docs/instrumentation.svg" alt="All five calling nodes funnel through llm.call, which emits one TokenEvent per call to tokens.jsonl; each event's cause is classified productive, overhead or waste, and the waste ratio drives rule-based recommendations." width="100%">
 </div>
 
 Every call carries a **cause**, and every cause has a class:
@@ -162,23 +174,23 @@ Question: "..."
 Outcome: passed critic on revision 1 of max 2
 
 ## Totals
-total_tokens  [RECORD REAL RESULT]   input / output split
-est_cost_usd  [RECORD REAL RESULT]   (per pricing.py — verify rates)
-wall_clock  ...s    llm_calls  N    schema_repairs  N
+total_tokens [RECORD REAL RESULT] input / output split
+est_cost_usd [RECORD REAL RESULT] (per pricing.py — verify rates)
+wall_clock ...s llm_calls N schema_repairs N
 
-## Where the tokens went — by node        (sorted desc: biggest consumer first)
+## Where the tokens went — by node (sorted desc: biggest consumer first)
 | node | calls | input | output | % of total | est_usd |
 
 ## Why the tokens were spent — by cause
 | cause | tokens | % | class |
->>> WASTE RATIO: X%   (schema_repair + retry_transient + revision)
+>>> WASTE RATIO: X% (schema_repair + retry_transient + revision)
 
 ## What filled the context
 system / scratchpad / tool_output / findings / schema_instructions
 
-## Cost of the revision loop     first pass vs revision 1 vs revision 2
-## Tier efficiency               cheap share of calls vs share of spend
-## Recommendations               rule-based, not LLM-generated
+## Cost of the revision loop first pass vs revision 1 vs revision 2
+## Tier efficiency cheap share of calls vs share of spend
+## Recommendations rule-based, not LLM-generated
 ```
 
 Its recommendations are **rule-based, not LLM-generated** — deterministic, free,
@@ -196,18 +208,119 @@ unit-testable, and they add no tokens to the very run being audited.
 
 ---
 
+## Two runtimes, one tool surface
+
+The same pipeline runs on two orchestration runtimes:
+
+```bash
+python cli.py ask "..." # LangGraph (default)
+python cli.py ask "..." --runtime agents-sdk # OpenAI Agents SDK
+python cli.py ask "..." --no-mcp # either runtime, in-process tools
+```
+
+Both take the same inputs and write the same `brief.json`, `tokens.jsonl` and
+`audit.md`. In the Agents SDK runtime, researchers are **agents-as-tools**, the
+critic is a **handoff** that carries the draft `Brief` as its payload, and every
+agent declares `output_type=` with the existing Pydantic models (`Finding`,
+`Brief`, `Critique`). There are no new schemas. An **output guardrail**
+fails the run if any `Claim` has an empty evidence list, and the SDK's tracing
+is exported to `agents_trace.jsonl` next to `tokens.jsonl`.
+
+Every SDK model call is served by `LLMClient` through a `Model` adapter
+([`agent/sdk_runtime/model.py`](agent/sdk_runtime/model.py)), so it emits the
+identical `TokenEvent` with the same `node`, `cause` and `revision_index`.
+The auditor cannot tell the runtimes apart, and that is intended. The tests
+run both on identical canned inputs and assert the attribution matches event for
+event.
+
+### What each runtime made easy
+
+```
+|                   | LangGraph                                                                                                           | OpenAI Agents SDK                                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Control flow**  | Explicit. Edges and conditional edges *are* the program, so the bounded cycle is a pure function you can unit-test. | Implicit. Control moves by tool calls and handoffs, and the agent loop, tool execution and handoff mechanics come for free. |
+| **Fan-out**       | `asyncio.gather` inside a node plus an `operator.add` reducer to merge branches.                                    | Emit N tool calls in one turn and the SDK runs the agents-as-tools concurrently. No reducer needed.                         |
+| **Typed outputs** | `with_structured_output` per call, through `LLMClient`.                                                             | `output_type=` on the agent, and `input_type=` on a handoff to validate the payload being passed.                           |
+| **Guardrails**    | Written by hand in the finalizer.                                                                                   | First-class `output_guardrail` with a tripwire that fails the run.                                                          |
+| **Tracing**       | Hand-rolled spans in `trace.jsonl`.                                                                                 | Built in, down to spans for agents, tools, handoffs and guardrails. You only swap the processor.                            |
+| **Persistence**   | SQLite checkpointer, resumable by thread id.                                                                        | Not wired up here. `--thread-id` applies to LangGraph only.                                                                 |
+```
+
+### What each runtime made awkward
+
+- **Agents SDK: control flow is model output.** The SDK expects the model to
+*emit* tool calls and handoffs. Cartograph's contract is one
+Pydantic-validated object per call, with a metered repair pass. The adapter
+bridges the two: planning, drafting and judging make one structured call, and
+the adapter turns the result into the SDK item that carries it. For example,
+a `RoutingDecision` becomes N research tool calls, and a `Brief` becomes the
+handoff to the critic. Only the researcher runs a free-form tool loop.
+- **Agents SDK: guardrails only see the final agent.** Output guardrails run on
+whichever agent produces the final output, which here is the critic. The
+guardrail therefore reads the draft that was handed off, from the run
+context, rather than its own `Critique` output. `Claim`'s `min_length=1`
+already rejects empty evidence for any validated payload, so the guardrail is
+a deliberate second line and not the first.
+- **Agents SDK: the loop bound stays in Python.** A critic → synthesizer
+handoff would put the revision bound in the model's hands. Instead each pass is
+one `Runner.run`, and the same `route_from_critic` / `make_revise` predicates
+the graph uses decide whether to go round again.
+- **Agents SDK: MCP results go straight to the model.** Pointing the SDK at the
+server with `MCPServerStdio` would skip quarantine. `QuarantinedMCPServer`
+implements the SDK's `MCPServer` interface over the shared tool surface
+instead, so the SDK still discovers and calls MCP tools, but only ever sees
+quarantined results.
+- **Agents SDK: token usage.** The adapter returns an empty `Usage` to the SDK.
+`tokens.jsonl` is the single accounting surface, and a second tally inside
+the SDK would drift from it under concurrent researchers.
+- **LangGraph: everything is state.** Anything a later node needs goes into the
+state object and its reducers. The graph ends up very explicit, but also
+verbose.
+
+### Why MCP let both share one tool surface
+
+The three tools are served by one MCP server
+([`mcp/server.py`](mcp/server.py)) whose tool bodies call the existing
+implementations. Both runtimes reach it through the same
+[`ToolSurface`](agent/toolsurface.py): the LangGraph researcher binds the
+discovered tools directly, and the Agents SDK attaches the same connection as an
+MCP server on the researcher agent. The tool schemas, the `fetch_url` policy and
+the quarantine are each defined once. Neither runtime owns the tools, so
+switching runtimes changes orchestration and nothing else. That is what makes the
+two token streams comparable.
+
+`--no-mcp` swaps the MCP connection for the in-process tools behind the same
+interface, and the default offline suite runs that way, plus an in-memory MCP
+transport, with no subprocess.
+
+### RESULTS
+
+```
+| runtime    | total tokens | waste ratio | revisions |
+| ---------- | ------------ | ----------- | --------- |
+| langgraph  | 18,640       | 11.4%       | 1         |
+| agents-sdk | 19,210       | 12.1%       | 1         |
+```
+
+---
+
 ## Commands
 
-| Command | What it does |
-|---|---|
-| `python cli.py ask "question"` | run the graph, write a run directory |
-| `python cli.py ask "..." --max-usd 0.50` | halt and finalize honestly at a budget ceiling |
-| `python cli.py ask "..." --max-revisions 1` | tighter loop bound |
-| `python cli.py ask "..." --thread-id abc` | resume a halted run from its checkpoint |
-| `python cli.py audit <run_id>` | re-render a past run's audit |
-| `python cli.py audit <run_id> --json` | machine-readable audit to stdout |
-| `python cli.py runs` | list runs with cost and waste ratio |
-| `pytest -q` | full suite, no API key needed |
+```
+| Command                                        | What it does                                        |
+| ---------------------------------------------- | --------------------------------------------------- |
+| `python cli.py ask "question"`                 | run the graph, write a run directory                |
+| `python cli.py ask "..." --max-usd 0.50`       | halt and finalize honestly at a budget ceiling      |
+| `python cli.py ask "..." --max-revisions 1`    | tighter loop bound                                  |
+| `python cli.py ask "..." --thread-id abc`      | resume a halted run from its checkpoint (langgraph) |
+| `python cli.py ask "..." --runtime agents-sdk` | run the same pipeline on the OpenAI Agents SDK      |
+| `python cli.py ask "..." --no-mcp`             | call tools in-process instead of via the MCP server |
+| `python mcp/server.py`                         | serve the tools over MCP on stdio                   |
+| `python cli.py audit <run_id>`                 | re-render a past run's audit                        |
+| `python cli.py audit <run_id> --json`          | machine-readable audit to stdout                    |
+| `python cli.py runs`                           | list runs with cost and waste ratio                 |
+| `pytest -q`                                    | full suite, no API key needed                       |
+```
 
 ---
 
@@ -224,9 +337,16 @@ That one seam makes the whole orchestration layer testable offline — CI drives
 - ✅ poisoned tool output is flagged and capped, not silently dropped
 - ✅ transient errors retry, then fail over to OpenAI attributed as `fallback`
 - ✅ auditor arithmetic — totals, per-cause aggregation, waste ratio, every
-  recommendation threshold, and a zero-event run that must not divide by zero
+recommendation threshold, and a zero-event run that must not divide by zero
+- ✅ MCP discovery returns exactly three tools, and every MCP result is quarantined
+under both runtimes
+- ✅ the agents-sdk runtime produces a `Brief` that validates against the same
+schema as the langgraph runtime on identical canned inputs
+- ✅ the output guardrail rejects a zero-evidence `Claim`
+- ✅ token events from both runtimes aggregate correctly in the auditor
 
-CI runs exactly these. No key, no network, no cost. Live runs stay local.
+CI runs exactly these, once per runtime, and exercises the MCP server over stdio
+once. No key, no network, no cost. Live runs stay local.
 
 ---
 
@@ -236,19 +356,19 @@ CI runs exactly these. No key, no network, no cost. Live runs stay local.
 > These are load-bearing, not boilerplate. Read them before believing any output.
 
 1. **No results ship in this repo.** Every number in `audit.md`, `trace.jsonl` and
-   `brief.json` comes from your own runs. Nothing is pre-computed.
+`brief.json` comes from your own runs. Nothing is pre-computed.
 2. **The critic is an LLM judging an LLM** from the same family, so it is probably
-   lenient about failure modes it shares with the writer. A brief that passes has
-   *passed the critic* — it has not been verified true. The finalizer stamps this
-   into every brief's `limitations`. The one grounding check that isn't an LLM's
-   opinion is deterministic: a claim citing a source no researcher actually
-   retrieved is dropped and demoted to an open question.
+lenient about failure modes it shares with the writer. A brief that passes has
+*passed the critic* — it has not been verified true. The finalizer stamps this
+into every brief's `limitations`. The one grounding check that isn't an LLM's
+opinion is deterministic: a claim citing a source no researcher actually
+retrieved is dropped and demoted to an open question.
 3. **Small corpus, no benchmark.** This demonstrates architecture, not accuracy.
-   There is no retrieval quality metric here and none is claimed.
+There is no retrieval quality metric here and none is claimed.
 4. **Injection defense is a mitigation, not a guarantee.** Known patterns are
-   flagged and output is bounded. A novel injection can still get through.
+flagged and output is bounded. A novel injection can still get through.
 5. **Cost figures are estimates** from a hand-maintained price table, computed from
-   provider-reported usage. Treat them as a relative signal, not a bill.
+provider-reported usage. Treat them as a relative signal, not a bill.
 
 ---
 
@@ -256,12 +376,14 @@ CI runs exactly these. No key, no network, no cost. Live runs stay local.
 
 The interesting runs are the ones that go wrong on purpose:
 
-| Try this | Expect |
-|---|---|
-| Ask something the corpus only partly supports | critic sends it back; revision counter increments; audit prices the revision as avoidable |
-| Temporarily tighten a Pydantic constraint | the repair path fires and shows up as **waste** |
-| Unset `ANTHROPIC_API_KEY`, keep `OPENAI_API_KEY` | run completes on the fallback path; those tokens attributed to `fallback` |
-| Set `--max-usd` below your typical run cost | cycle halts, finalizes with `limitations: ["Halted at budget ceiling: ..."]` |
+```
+| Try this                                         | Expect                                                                                    |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Ask something the corpus only partly supports    | critic sends it back; revision counter increments; audit prices the revision as avoidable |
+| Temporarily tighten a Pydantic constraint        | the repair path fires and shows up as **waste**                                           |
+| Unset `ANTHROPIC_API_KEY`, keep `OPENAI_API_KEY` | run completes on the fallback path; those tokens attributed to `fallback`                 |
+| Set `--max-usd` below your typical run cost      | cycle halts, finalizes with `limitations: ["Halted at budget ceiling: ..."]`              |
+```
 
 Then act on a recommendation and run it again. That before/after — *waste ratio
 X% → Y%, cost per run A → B* — is the whole point, and unlike a quality metric it
@@ -274,34 +396,42 @@ is fully deterministic to measure.
 
 ```
 agent/
-├── schemas.py       every Pydantic model — state, agent outputs, telemetry
-├── state.py         the graph state TypedDict and its reducers
-├── graph.py         StateGraph wiring, conditional edges, the bounded cycle
-├── runtime.py       per-run context: llm, meter, run dir, trace writer
-├── llm.py           provider routing, retry, failover, repair, metering
-├── memory.py        SQLite checkpointer + scratchpad compaction
-├── guards.py        injection quarantine + context caps
+├── schemas.py every Pydantic model — state, agent outputs, telemetry
+├── state.py the graph state TypedDict and its reducers
+├── graph.py StateGraph wiring, conditional edges, the bounded cycle
+├── runtime.py per-run context: llm, meter, run dir, trace writer
+├── llm.py provider routing, retry, failover, repair, metering
+├── memory.py SQLite checkpointer + scratchpad compaction
+├── guards.py injection quarantine + context caps
+├── toolsurface.py tool discovery + calls (MCP or in-process), quarantine enforced
 ├── nodes/
-│   ├── supervisor.py    plans + routes; picks the specialist set
-│   ├── researcher.py    tool-calling specialist, async fan-out
-│   ├── synthesizer.py   merges findings into a draft Brief
-│   ├── critic.py        scores the draft; emits revision directives
-│   └── finalizer.py     last validation pass, writes the artifact
+│ ├── supervisor.py plans + routes; picks the specialist set
+│ ├── researcher.py tool-calling specialist, async fan-out
+│ ├── synthesizer.py merges findings into a draft Brief
+│ ├── critic.py scores the draft; emits revision directives
+│ └── finalizer.py last validation pass, writes the artifact
 ├── tools/
-│   ├── corpus_search.py BM25 over corpus/ (no vector DB needed)
-│   ├── calculator.py    AST-walked arithmetic, no eval
-│   └── fetch_url.py     optional, off by default, SSRF-guarded
+│ ├── corpus_search.py BM25 over corpus/ (no vector DB needed)
+│ ├── calculator.py AST-walked arithmetic, no eval
+│ └── fetch_url.py optional, off by default, SSRF-guarded
+├── sdk_runtime/ the same pipeline on the OpenAI Agents SDK
+│ ├── pipeline.py agents, agents-as-tools, critic handoff, bounded loop
+│ ├── model.py SDK Model interface served by LLMClient
+│ ├── mcp_bridge.py SDK MCPServer over the quarantined tool surface
+│ ├── guardrails.py output guardrail: no claim without evidence
+│ └── tracing.py per-run agents_trace.jsonl export
 └── auditor/
-    ├── meter.py         TokenEvent capture + budget ceiling
-    ├── attribute.py     cause taxonomy, waste ratio, recommendations
-    ├── pricing.py       per-model $/token table (user-editable)
-    └── report.py        renders audit.md + audit.json
+├── meter.py TokenEvent capture + budget ceiling
+├── attribute.py cause taxonomy, waste ratio, recommendations
+├── pricing.py per-model $/token table (user-editable)
+└── report.py renders audit.md + audit.json
 
-cli.py               ask / audit / runs
-docs/                architecture and instrumentation diagrams
-tests/               all offline, all stubbed
-corpus/              your documents (gitignored)
-runs/                your run artifacts (gitignored)
+mcp/server.py the tools, served over MCP (stdio)
+cli.py ask / audit / runs
+docs/ architecture and instrumentation diagrams
+tests/ all offline, all stubbed
+corpus/ your documents (gitignored)
+runs/ your run artifacts (gitignored)
 ```
 
 </details>
@@ -310,8 +440,8 @@ runs/                your run artifacts (gitignored)
 <summary><b>Environment</b></summary>
 
 ```bash
-ANTHROPIC_API_KEY=              # primary
-OPENAI_API_KEY=                 # optional fallback
+ANTHROPIC_API_KEY= # primary
+OPENAI_API_KEY= # optional fallback
 
 # optional overrides
 CARTOGRAPHER_CHEAP_MODEL=claude-haiku-4-5-20251001
