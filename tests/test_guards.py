@@ -81,3 +81,39 @@ def test_cap_is_a_no_op_below_the_limit():
 def test_estimate_tokens_is_monotonic_and_zero_safe():
     assert estimate_tokens("") == 0
     assert estimate_tokens("a" * 400) > estimate_tokens("a" * 40)
+
+
+# -- filesystem containment -------------------------------------------
+
+
+def test_resolve_within_accepts_a_nested_path(tmp_path):
+    (tmp_path / "sub").mkdir()
+    assert guards.resolve_within(tmp_path, "sub/a.md") == (tmp_path / "sub" / "a.md").resolve()
+
+
+@pytest.mark.parametrize("escape", ["../outside.md", "sub/../../outside.md", "/etc/passwd"])
+def test_resolve_within_refuses_traversal_and_absolute_paths(tmp_path, escape):
+    root = tmp_path / "root"
+    root.mkdir()
+    with pytest.raises(guards.PathOutsideRoot):
+        guards.resolve_within(root, escape)
+
+
+def test_resolve_within_refuses_a_sibling_sharing_the_prefix(tmp_path):
+    """The case a string-prefix check gets wrong: '/x/corpus-evil' starts with '/x/corpus'."""
+    root = tmp_path / "corpus"
+    root.mkdir()
+    (tmp_path / "corpus-evil").mkdir()
+    assert str(tmp_path / "corpus-evil").startswith(str(root))
+    with pytest.raises(guards.PathOutsideRoot):
+        guards.resolve_within(root, "../corpus-evil/secret.md")
+
+
+def test_resolve_within_follows_symlinks_before_deciding(tmp_path):
+    root = tmp_path / "corpus"
+    root.mkdir()
+    outside = tmp_path / "secret.md"
+    outside.write_text("secret", encoding="utf-8")
+    (root / "innocent.md").symlink_to(outside)
+    with pytest.raises(guards.PathOutsideRoot):
+        guards.resolve_within(root, "innocent.md")

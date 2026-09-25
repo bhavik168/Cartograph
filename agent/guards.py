@@ -4,7 +4,7 @@ Everything a tool returns is untrusted: a corpus document, a fetched page, even
 a calculator echo can carry text that reads like an instruction. Nothing
 reaches a model prompt without passing through :func:`quarantine`.
 
-Three things happen here:
+Three things happen to tool output here:
 
 1. **Delimiting.** Tool output is wrapped in a labelled block that states, in
    the surrounding prose, that the contents are data and never instructions.
@@ -18,12 +18,17 @@ Three things happen here:
 This is a mitigation, not a guarantee. A determined novel injection can still
 get through; what this buys is that the common cases are labelled and bounded,
 and that every one of them leaves a trace record.
+
+The module also owns filesystem containment (:func:`resolve_within`): untrusted
+names — a corpus filename, a caller-supplied run id — are only ever turned into
+paths through it.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from agent.auditor.meter import estimate_tokens
 
@@ -129,3 +134,28 @@ def quarantine(
         original_tokens=original_tokens,
         final_tokens=estimate_tokens(wrapped),
     )
+
+
+# --------------------------------------------------------------------------
+# Filesystem containment
+# --------------------------------------------------------------------------
+
+
+class PathOutsideRoot(ValueError):
+    """A path resolved to somewhere outside the root it was supposed to stay in."""
+
+
+def resolve_within(root: Path | str, candidate: Path | str) -> Path:
+    """Resolve ``candidate`` against ``root`` and refuse anything that escapes it.
+
+    Both sides are fully resolved first — ``..`` collapsed, symlinks followed —
+    and containment is decided on path *components*, never on a string prefix.
+    A prefix test gets two cases wrong: ``/data/corpus-evil`` starts with
+    ``/data/corpus``, and ``corpus/link.md`` can be a symlink to ``/etc``.
+    An absolute ``candidate`` is checked as-is, not re-rooted.
+    """
+    base = Path(root).resolve(strict=False)
+    target = (base / candidate).resolve(strict=False)
+    if not target.is_relative_to(base):
+        raise PathOutsideRoot(f"{candidate!s} resolves outside {base}")
+    return target
