@@ -161,25 +161,25 @@ Every call carries a **cause**, and every cause has a class:
 
 ### What `audit.md` looks like
 
-Shape of the generated report. The placeholders are literal: **no numbers ship in
-this repo** — yours come from your own runs.
+Shape of the generated report. **No numbers ship in this repo** — yours come from
+your own runs.
 
 ```markdown
 # Token Audit — run 2026-08-15T14:22:01Z
-Question: "..."
+Question:
 Outcome: passed critic on revision 1 of max 2
 
 ## Totals
-total_tokens  [RECORD REAL RESULT]   input / output split
-est_cost_usd  [RECORD REAL RESULT]   (per pricing.py — verify rates)
-wall_clock  ...s    llm_calls  N    schema_repairs  N
+total_tokens  input / output split
+est_cost_usd  (per pricing.py — verify rates)
+wall_clock    llm_calls    schema_repairs
 
 ## Where the tokens went — by node        (sorted desc: biggest consumer first)
 | node | calls | input | output | % of total | est_usd |
 
 ## Why the tokens were spent — by cause
 | cause | tokens | % | class |
->>> WASTE RATIO: X%   (schema_repair + retry_transient + revision)
+>>> WASTE RATIO   (schema_repair + retry_transient + revision)
 
 ## What filled the context
 system / scratchpad / tool_output / findings / schema_instructions
