@@ -4,8 +4,6 @@
 
 **Maps a question into an evidenced brief — and shows you exactly what it cost to get there.**
 
-[![ci](https://img.shields.io/github/actions/workflow/status/bhavik168/Cartograph/ci.yml?branch=main&style=flat-square&label=ci&labelColor=0d1420)](https://github.com/bhavik168/Cartograph/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-no%20API%20key%20required-34d399?style=flat-square&labelColor=0d1420)
 [![ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json&style=flat-square&labelColor=0d1420)](https://github.com/astral-sh/ruff)
 ![python](https://img.shields.io/badge/python-3.11+-3776ab?style=flat-square&logo=python&logoColor=white&labelColor=0d1420)
 
@@ -33,8 +31,7 @@ Bring your own key, run it locally, read the report it writes.
 | 🧬 **Schema-first**       | every LLM call returns a validated Pydantic model, with a repair pass when it doesn't |
 | 🧮 **Token auditor**      | per-node, per-cause, per-revision spend, and a **waste ratio** you can act on         |
 | 🛡️ **Quarantined tools** | untrusted output is labelled, flagged and capped before it reaches a prompt           |
-| 🔀 **Failover**           | Anthropic primary, OpenAI fallback — exercised in tests, not just written             |
-| 🧪 **Offline tests**      | the whole graph runs in CI against a stubbed LLM: no key, no network, no cost         |
+| 🔀 **Failover**           | Anthropic primary, OpenAI fallback                                                    |
 | 🔌 **MCP tool server**    | tools are discovered and called over MCP; quarantine is enforced in the client        |
 | 🛰️ **MCP research server** | the whole graph as six MCP tools: start a brief, poll it, read the brief and audit    |
 | 🤝 **Two runtimes**       | the same pipeline on LangGraph or the OpenAI Agents SDK, one audit trail for both     |
@@ -235,9 +232,7 @@ is exported to `agents_trace.jsonl` next to `tokens.jsonl`.
 Every SDK model call is served by `LLMClient` through a `Model` adapter
 ([`agent/sdk_runtime/model.py`](agent/sdk_runtime/model.py)), so it emits the
 identical `TokenEvent` with the same `node`, `cause` and `revision_index`.
-The auditor cannot tell the runtimes apart, and that is intended. The tests
-run both on identical canned inputs and assert the attribution matches event for
-event.
+The auditor cannot tell the runtimes apart, and that is intended.
 
 ### What each runtime made easy
 
@@ -420,8 +415,7 @@ clients launch servers from a working directory of their own.
 - **Quarantine on every path.** Direct tool results, run status, briefs and audits
   are all rendered through `guards.quarantine`. Inside a run, the researcher's tools
   are the in-process surface pinned to the corpus root, and they still go through
-  `ToolSurface.call`, the only public call path, which quarantines. The tests
-  assert every one of these paths calls it.
+  `ToolSurface.call`, the only public call path, which quarantines.
 - **`fetch_url` is off by default** and only a server flag turns it on. When the
   server starts, it overwrites `CARTOGRAPHER_ENABLE_FETCH_URL` to match its own flag,
   so a value inherited from the MCP client's environment cannot enable network
@@ -482,38 +476,6 @@ clients launch servers from a working directory of their own.
 | `python cli.py audit <run_id>`                 | re-render a past run's audit                        |
 | `python cli.py audit <run_id> --json`          | machine-readable audit to stdout                    |
 | `python cli.py runs`                           | list runs with cost and waste ratio                 |
-| `pytest -q`                                    | full suite, no API key needed                       |
-
----
-
-## Tests run without an API key
-
-`LLMClient` never constructs a model itself; it calls an injected `model_factory`.
-That one seam makes the whole orchestration layer testable offline — CI drives the
-**real graph** with canned Pydantic objects and asserts:
-
-- ✅ a failing critique routes back and increments the revision counter
-- ✅ exceeding `MAX_REVISIONS` finalizes with honest limitations
-- ✅ parallel findings accumulate through the reducer
-- ✅ a `Claim` with zero evidence is rejected, and the repair path fires exactly once
-- ✅ poisoned tool output is flagged and capped, not silently dropped
-- ✅ transient errors retry, then fail over to OpenAI attributed as `fallback`
-- ✅ auditor arithmetic — totals, per-cause aggregation, waste ratio, every
-  recommendation threshold, and a zero-event run that must not divide by zero
-- ✅ MCP discovery returns exactly three tools, and every MCP result is quarantined
-  under both runtimes
-- ✅ the agents-sdk runtime produces a `Brief` that validates against the same
-  schema as the langgraph runtime on identical canned inputs
-- ✅ the output guardrail rejects a zero-evidence `Claim`
-- ✅ token events from both runtimes aggregate correctly in the auditor
-- ✅ the CLI's graph run works with the SQLite checkpointer attached
-- ✅ the MCP research server rejects out-of-bounds arguments with a typed error,
-  returns `UNKNOWN_RUN` and `RUN_IN_PROGRESS` as typed errors, cannot reach a
-  corpus file symlinked outside its root, quarantines every result path, and
-  surfaces a budget-ceiling finalization as `finalized_reason`
-
-CI runs exactly these, once per runtime, and exercises the MCP server over stdio
-once. No key, no network, no cost. Live runs stay local.
 
 ---
 
@@ -597,7 +559,6 @@ cartograph_mcp/      the research graph as an MCP server (stdio)
 └── config.py        corpus root, ceilings, fetch flag — fixed at boot
 cli.py               ask / audit / runs
 docs/                architecture and instrumentation diagrams
-tests/               all offline, all stubbed
 corpus/              your documents (gitignored)
 runs/                your run artifacts (gitignored)
 ```

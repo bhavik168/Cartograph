@@ -11,6 +11,4 @@ mcp>=2.0,<3          # tool server + client (MCPServer / Client are the 2.x API)
 openai-agents>=0.22  # --runtime agents-sdk
 
 # dev
-pytest>=8.3
-pytest-asyncio>=0.24
 ruff>=0.8
