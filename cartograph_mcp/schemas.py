@@ -209,7 +209,9 @@ class ErrorCode(str, Enum):
     CORPUS_NOT_INDEXED = "CORPUS_NOT_INDEXED"
     """The corpus root holds no indexable .md/.txt documents."""
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
-    """The server's process-wide USD ceiling is spent or fully reserved."""
+    """The server's process-wide USD ceiling is spent by runs that have ended."""
+    BUDGET_RESERVED = "BUDGET_RESERVED"
+    """The ceiling is fully reserved by runs in flight. Retryable once one finishes."""
     RUN_LIMIT_REACHED = "RUN_LIMIT_REACHED"
     """Too many runs in flight. Retryable once one finishes."""
     THREAD_EXISTS = "THREAD_EXISTS"
@@ -222,7 +224,9 @@ class ErrorCode(str, Enum):
     """Unexpected server fault. Details are logged server-side, never returned."""
 
 
-RETRYABLE = frozenset({ErrorCode.RUN_IN_PROGRESS, ErrorCode.RUN_LIMIT_REACHED})
+RETRYABLE = frozenset(
+    {ErrorCode.RUN_IN_PROGRESS, ErrorCode.RUN_LIMIT_REACHED, ErrorCode.BUDGET_RESERVED}
+)
 
 
 class ErrorBody(BaseModel):

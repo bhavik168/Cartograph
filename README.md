@@ -47,6 +47,7 @@ Bring your own key, run it locally, read the report it writes.
 
 ```bash
 pip install -r requirements.txt
+pip install -e .              # also installs the cartograph-mcp console script
 cp .env.example .env          # set ANTHROPIC_API_KEY
 cp your-docs/*.md corpus/     # 5-15 plain-text documents
 python cli.py ask "what does our corpus say about Q3 retention?"
@@ -171,8 +172,7 @@ across runs. Origin is recorded once per run instead: `origin` on the audit
 
 ### What `audit.md` looks like
 
-Shape of the generated report. **No numbers ship in this repo** — yours come from
-your own runs.
+Shape of the generated report.
 
 ```markdown
 # Token Audit — run 2026-08-15T14:22:01Z
@@ -326,7 +326,7 @@ is generated from it, so the bounds a caller sees are the ones enforced.
 
 | Tool | Arguments (bounds) | Returns |
 |---|---|---|
-| `corpus_search` | `query` str, 1–500 chars · `top_k` int, 1–10, default 4 | `backend`, `hit_count`, `untrusted_content.hits[]` of `{doc_id, chunk, score, text}` |
+| `corpus_search` | `query` str, 1–500 chars · `top_k` int, 1–10, default 4 | `backend`, `hit_count`, `untrusted_content.hits[]` of `{doc_id, chunk, score, text}`, `injection_flags` |
 | `calculator` | `expression` str, 1–200 chars | `{expression, value}` |
 | `start_brief` | `question` str, 1–2000 chars · `thread_id` optional, `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`, must be unused · `max_revisions` optional int, 0–2 · `max_usd` optional float, > 0 | `{run_id, thread_id, status: "planning", max_revisions, max_usd}` — returns at once |
 | `get_run_status` | `run_id` (same pattern) | `status`, `current_node`, `revision_count`, `llm_calls`, `tokens_spent`, `est_usd_spent`, `max_usd`, `finalized_reason`, `failure`, `untrusted_content.{routing, findings}` |
@@ -359,7 +359,8 @@ Branch on `code`:
 | `RUN_IN_PROGRESS` | `get_brief` / `get_token_audit` before the run finalized | ✓ |
 | `RUN_FAILED` | the run ended without a brief (all providers failed, server restart mid-run) | |
 | `CORPUS_NOT_INDEXED` | the corpus root has no `.md`/`.txt` documents | |
-| `BUDGET_EXCEEDED` | the process-wide USD ceiling is spent or reserved | |
+| `BUDGET_EXCEEDED` | the process-wide USD ceiling is spent by runs that have ended | |
+| `BUDGET_RESERVED` | the rest of the process-wide ceiling is reserved by runs in flight | ✓ |
 | `RUN_LIMIT_REACHED` | too many runs in flight | ✓ |
 | `THREAD_EXISTS` | `thread_id` already has checkpoints | |
 | `PATH_OUTSIDE_ROOT` | an id resolved outside its root (defence in depth; the id pattern should stop it first) | |
@@ -427,7 +428,9 @@ clients launch servers from a working directory of their own.
   access. It stays off for the same reasons as in the graph. A brief should be
   reproducible from a fixed corpus. Remote HTML is also the richest source of prompt
   injection, and a model-driven client is the caller most likely to be steered
-  toward a hostile page. It is not exposed as an MCP tool at all. The flag only
+  toward a hostile page. (`CARTOGRAPHER_ENABLE_FETCH_URL` is the graph's pre-existing
+  switch, shared with the CLI; `CARTOGRAPH_MCP_ENABLE_FETCH_URL` is this server's
+  own flag.) It is not exposed as an MCP tool at all. The flag only
   controls whether research runs may bind it.
 - **Budget, three layers.** (1) Each run gets `min(caller's max_usd, server
   max_usd, what remains of the process-wide ceiling)`. (2) Each in-flight run
@@ -449,6 +452,9 @@ clients launch servers from a working directory of their own.
 - **Runs live in the server process.** Finished runs remain readable after a restart
   (from `run.json`, `brief.json`, `audit.json` and the checkpoint). A run that was
   still going when the server stopped is reported as failed. It is not resumed.
+- **No resume over MCP.** `start_brief` requires an unused `thread_id`, so a client
+  cannot resume a halted run from its checkpoint the way `cli.py ask --thread-id`
+  can. It has to start a new run.
 - **The corpus index is built once per process.** Documents added while the server
   is running are not searchable until it restarts.
 - **Only MCP-started runs are visible.** CLI runs in the same runs root return
@@ -516,19 +522,17 @@ once. No key, no network, no cost. Live runs stay local.
 > [!NOTE]
 > These are load-bearing, not boilerplate. Read them before believing any output.
 
-1. **No results ship in this repo.** Every number in `audit.md`, `trace.jsonl` and
-   `brief.json` comes from your own runs. Nothing is pre-computed.
-2. **The critic is an LLM judging an LLM** from the same family, so it is probably
+1. **The critic is an LLM judging an LLM** from the same family, so it is probably
    lenient about failure modes it shares with the writer. A brief that passes has
    *passed the critic* — it has not been verified true. The finalizer stamps this
    into every brief's `limitations`. The one grounding check that isn't an LLM's
    opinion is deterministic: a claim citing a source no researcher actually
    retrieved is dropped and demoted to an open question.
-3. **Small corpus, no benchmark.** This demonstrates architecture, not accuracy.
+2. **Small corpus, no benchmark.** This demonstrates architecture, not accuracy.
    There is no retrieval quality metric here and none is claimed.
-4. **Injection defense is a mitigation, not a guarantee.** Known patterns are
+3. **Injection defense is a mitigation, not a guarantee.** Known patterns are
    flagged and output is bounded. A novel injection can still get through.
-5. **Cost figures are estimates** from a hand-maintained price table, computed from
+4. **Cost figures are estimates** from a hand-maintained price table, computed from
    provider-reported usage. Treat them as a relative signal, not a bill.
 
 ---

@@ -195,10 +195,17 @@ class RunRegistry:
 
             remaining = self.config.total_max_usd - self.committed_usd()
             if remaining <= 0:
+                spent = sum(run.spent_usd for run in self._runs.values())
+                if spent >= self.config.total_max_usd:
+                    raise CartographToolError(
+                        ErrorCode.BUDGET_EXCEEDED,
+                        "The server's process-wide USD ceiling is spent.",
+                        total_max_usd=self.config.total_max_usd,
+                    )
                 raise CartographToolError(
-                    ErrorCode.BUDGET_EXCEEDED,
-                    "The server's process-wide USD ceiling is spent or reserved by "
-                    "runs in flight.",
+                    ErrorCode.BUDGET_RESERVED,
+                    "The server's process-wide USD ceiling is reserved by runs in "
+                    "flight; retry once one finishes.",
                     total_max_usd=self.config.total_max_usd,
                 )
             max_usd = min(
